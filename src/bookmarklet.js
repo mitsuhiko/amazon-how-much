@@ -3,6 +3,7 @@
 
   const APP_ID = 'amazon-parcel-taxlet';
   const PRICE_PER_PARCEL = 2;
+  const VAT_RATE_OPTIONS = [10, 20];
   const PHYSICAL_ORDER_ID = /\b\d{3}-\d{7}-\d{7}\b/;
   const DIGITAL_ORDER_ID = /\bD\d{2}-\d{7}-\d{7}\b/i;
 
@@ -84,6 +85,7 @@
       .apx-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 10px 0 12px; }
       .apx-stat { background: #fff; border: 2px solid #201a14; border-radius: 12px; padding: 10px; }
       .apx-num { display: block; font-weight: 900; font-size: 26px; line-height: 1; letter-spacing: -.04em; }
+      .apx-num-small { font-size: 20px; line-height: 1.1; letter-spacing: -.03em; }
       .apx-label { display: block; font-size: 11px; line-height: 1.25; margin-top: 5px; opacity: .78; }
       .apx-result { display: none; margin-top: 12px; padding: 12px; background: #e9f7dc; border: 2px solid #201a14; border-radius: 12px; font-size: 13px; line-height: 1.45; }
       .apx-result strong { font-weight: 900; }
@@ -112,12 +114,14 @@
         <div class="apx-meter" aria-hidden="true"><div class="apx-bar" id="apx-bar"></div></div>
         <div class="apx-stats">
           <div class="apx-stat"><span class="apx-num" id="apx-orders">0</span><span class="apx-label">physical orders in last 365 days</span></div>
+          <div class="apx-stat"><span class="apx-num apx-num-small" id="apx-spend">—</span><span class="apx-label">parsed purchase total</span></div>
+          <div class="apx-stat"><span class="apx-num" id="apx-cost">€0</span><span class="apx-label">€2 × physical orders</span></div>
+          <div class="apx-stat"><span class="apx-num apx-num-small" id="apx-cost-vat">€0</span><span class="apx-label">tax incl. 10–20% VAT-on-tax</span></div>
           <div class="apx-stat"><span class="apx-num" id="apx-deliveries">0</span><span class="apx-label">visible delivery/shipment boxes</span></div>
           <div class="apx-stat"><span class="apx-num" id="apx-pages">0</span><span class="apx-label">order-history pages scanned</span></div>
-          <div class="apx-stat"><span class="apx-num" id="apx-cost">€0</span><span class="apx-label">€2 × physical orders</span></div>
         </div>
         <div class="apx-result" id="apx-result"></div>
-        <p class="apx-note">This is an estimate. Amazon does not expose a clean parcel-tax field; one order may be split into multiple deliveries, and multiple orders can sometimes arrive together.</p>
+        <p class="apx-note">This is an estimate. Order totals are scraped from visible order headers. Amazon does not expose a clean parcel-tax/VAT field; VAT-on-tax is shown for both 10% and 20% because the order list does not reveal which rate applies.</p>
         <div class="apx-actions">
           <button class="apx-btn secondary" id="apx-stop">Stop</button>
           <button class="apx-btn secondary" id="apx-copy" disabled>Copy CSV</button>
@@ -135,9 +139,11 @@
   const els = {
     status: $('apx-status'),
     orders: $('apx-orders'),
+    spend: $('apx-spend'),
     deliveries: $('apx-deliveries'),
     pages: $('apx-pages'),
     cost: $('apx-cost'),
+    costVat: $('apx-cost-vat'),
     result: $('apx-result'),
     log: $('apx-log'),
     stop: $('apx-stop'),
@@ -186,12 +192,104 @@
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
+  function roundMoney(n) {
+    return Math.round((Number(n) || 0) * 100) / 100;
+  }
+
   function euro(n) {
-    return '€' + n.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    const value = roundMoney(n);
+    const cents = Math.abs(Math.round(value * 100) % 100);
+    return '€' + value.toLocaleString('de-DE', { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: 2 });
+  }
+
+  function euroRange(values) {
+    const rounded = values.map(roundMoney);
+    if (!rounded.length) return euro(0);
+    if (rounded.every((v) => Math.abs(v - rounded[0]) < 0.01)) return euro(rounded[0]);
+    return euro(rounded[0]) + '–' + euro(rounded[rounded.length - 1]);
+  }
+
+  function percent(n) {
+    if (!Number.isFinite(n)) return '—';
+    const value = n * 100;
+    return value.toLocaleString('de-DE', { minimumFractionDigits: value > 0 && value < 10 ? 1 : 0, maximumFractionDigits: 1 }) + '%';
+  }
+
+  function percentRange(values) {
+    if (!values.length) return '—';
+    if (values.every((v) => Math.abs(v - values[0]) < 0.0001)) return percent(values[0]);
+    return percent(values[0]) + '–' + percent(values[values.length - 1]);
+  }
+
+  function moneyCell(n) {
+    return typeof n === 'number' && Number.isFinite(n) ? roundMoney(n).toFixed(2) : '';
   }
 
   function text(el) {
     return (el && (el.innerText || el.textContent) || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function parseLocalizedAmount(raw) {
+    let s = String(raw || '').replace(/\s+/g, '').replace(/[^\d,.-]/g, '');
+    if (!/\d/.test(s)) return null;
+
+    const negative = s.startsWith('-');
+    s = s.replace(/-/g, '');
+
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    let decimalSep = '';
+
+    if (lastComma !== -1 && lastDot !== -1) {
+      decimalSep = lastComma > lastDot ? ',' : '.';
+    } else if (lastComma !== -1) {
+      const digitsAfter = s.length - lastComma - 1;
+      if (digitsAfter > 0 && digitsAfter <= 2) decimalSep = ',';
+    } else if (lastDot !== -1) {
+      const digitsAfter = s.length - lastDot - 1;
+      if (digitsAfter > 0 && digitsAfter <= 2) decimalSep = '.';
+    }
+
+    if (decimalSep) {
+      const parts = s.split(decimalSep);
+      const fraction = parts.pop();
+      s = parts.join('').replace(/[.,]/g, '') + '.' + fraction.replace(/[.,]/g, '');
+    } else {
+      s = s.replace(/[.,]/g, '');
+    }
+
+    const value = Number((negative ? '-' : '') + s);
+    return Number.isFinite(value) ? roundMoney(value) : null;
+  }
+
+  function firstCurrencyAmount(raw) {
+    const s = String(raw || '').replace(/\u00a0/g, ' ');
+    const m = s.match(/(?:€|EUR)\s*(-?\d[\d.,\s]*\d|-?\d)|(-?\d[\d.,\s]*\d|-?\d)\s*(?:€|EUR)\b/i);
+    return m ? parseLocalizedAmount(m[1] || m[2]) : null;
+  }
+
+  function parseOrderTotal(header) {
+    const labelExact = /^(order\s+total|total|summe|gesamtsumme|gesamtbetrag|gesamt|bestellsumme)$/i;
+    for (const el of Array.from(header.querySelectorAll('*'))) {
+      const label = text(el);
+      if (!labelExact.test(label)) continue;
+
+      let node = el.closest('.a-column') || el.parentElement;
+      for (let i = 0; node && i < 4; i += 1, node = node.parentElement) {
+        const amount = firstCurrencyAmount(text(node).replace(label, ' '));
+        if (amount !== null) return amount;
+      }
+    }
+
+    const headerText = text(header);
+    const labelRe = /\b(order\s+total|total|summe|gesamtsumme|gesamtbetrag|gesamt|bestellsumme)\b/ig;
+    let m;
+    while ((m = labelRe.exec(headerText))) {
+      const amount = firstCurrencyAmount(headerText.slice(m.index + m[0].length, m.index + m[0].length + 120));
+      if (amount !== null) return amount;
+    }
+
+    return firstCurrencyAmount(headerText);
   }
 
   function log(msg) {
@@ -206,12 +304,43 @@
     updateStats();
   }
 
+  function taxWithVat(amount, vatPercent) {
+    return roundMoney(amount * (1 + vatPercent / 100));
+  }
+
+  function withVatOptions(amount) {
+    return VAT_RATE_OPTIONS.map((rate) => taxWithVat(amount, rate));
+  }
+
+  function financials() {
+    const orders = Array.from(state.orders.values());
+    const ordersWithTotals = orders.filter((o) => typeof o.orderTotal === 'number' && Number.isFinite(o.orderTotal));
+    const purchaseTotal = roundMoney(ordersWithTotals.reduce((sum, o) => sum + o.orderTotal, 0));
+    const orderTax = orders.length * PRICE_PER_PARCEL;
+    const parsedOrderTax = ordersWithTotals.length * PRICE_PER_PARCEL;
+    const deliveryTax = state.deliveryGroups * PRICE_PER_PARCEL;
+
+    return {
+      orderCount: orders.length,
+      ordersWithTotalCount: ordersWithTotals.length,
+      purchaseTotal,
+      orderTax,
+      orderTaxWithVat: withVatOptions(orderTax),
+      parsedOrderTax,
+      parsedOrderTaxWithVat: withVatOptions(parsedOrderTax),
+      deliveryTax,
+      deliveryTaxWithVat: withVatOptions(deliveryTax),
+    };
+  }
+
   function updateStats() {
-    const orderCount = state.orders.size;
-    els.orders.textContent = String(orderCount);
+    const totals = financials();
+    els.orders.textContent = String(totals.orderCount);
+    els.spend.textContent = totals.ordersWithTotalCount ? euro(totals.purchaseTotal) : '—';
     els.deliveries.textContent = String(state.deliveryGroups);
     els.pages.textContent = String(state.pages);
-    els.cost.textContent = euro(orderCount * PRICE_PER_PARCEL);
+    els.cost.textContent = euro(totals.orderTax);
+    els.costVat.textContent = euroRange(totals.orderTaxWithVat);
   }
 
   const monthMap = new Map(Object.entries({
@@ -340,6 +469,7 @@
 
     const orderId = idMatch[0];
     const orderDate = parseFirstDate(headerText);
+    const orderTotal = parseOrderTotal(header);
     const detailLink = Array.from(card.querySelectorAll('a[href]')).find((a) => /order-details/i.test(a.href));
     const boxes = Array.from(card.querySelectorAll('.delivery-box'));
     const deliveryDates = boxes.map((box) => parseFirstDate(text(box))).filter(Boolean);
@@ -348,6 +478,8 @@
       orderId,
       orderDate,
       orderDateText: orderDate ? formatDate(orderDate) : '',
+      orderTotal,
+      orderTotalText: moneyCell(orderTotal),
       deliveryBoxCount: boxes.length,
       deliveryDates: deliveryDates.map(formatDate).join(';'),
       detailPath: detailLink ? new URL(detailLink.href).pathname : '',
@@ -409,10 +541,28 @@
   }
 
   function makeCsv() {
-    const rows = [['order_date', 'order_id', 'visible_delivery_boxes', 'visible_delivery_dates', 'detail_path']];
+    const rows = [[
+      'order_date',
+      'order_id',
+      'order_total_eur',
+      'parcel_tax_eur',
+      ...VAT_RATE_OPTIONS.map((rate) => 'parcel_tax_plus_vat_' + rate + '_eur'),
+      'visible_delivery_boxes',
+      'visible_delivery_dates',
+      'detail_path',
+    ]];
     Array.from(state.orders.values())
       .sort((a, b) => (a.orderDateText < b.orderDateText ? -1 : 1))
-      .forEach((o) => rows.push([o.orderDateText, o.orderId, String(o.deliveryBoxCount), o.deliveryDates, o.detailPath]));
+      .forEach((o) => rows.push([
+        o.orderDateText,
+        o.orderId,
+        o.orderTotalText,
+        moneyCell(PRICE_PER_PARCEL),
+        ...VAT_RATE_OPTIONS.map((rate) => moneyCell(taxWithVat(PRICE_PER_PARCEL, rate))),
+        String(o.deliveryBoxCount),
+        o.deliveryDates,
+        o.detailPath,
+      ]));
     return rows.map((row) => row.map((cell) => '"' + String(cell).replace(/"/g, '""') + '"').join(',')).join('\n') + '\n';
   }
 
@@ -486,16 +636,28 @@
     els.bar.style.animation = 'none';
     els.bar.style.width = '100%';
 
-    const orders = state.orders.size;
-    const orderCost = orders * PRICE_PER_PARCEL;
-    const deliveryCost = state.deliveryGroups * PRICE_PER_PARCEL;
+    const totals = financials();
+    const orders = totals.orderCount;
+    const vatLabel = VAT_RATE_OPTIONS.join('–') + '%';
+    const parsedTaxShare = totals.purchaseTotal > 0 ? percent(totals.parsedOrderTax / totals.purchaseTotal) : '—';
+    const parsedTaxWithVatShare = totals.purchaseTotal > 0
+      ? percentRange(totals.parsedOrderTaxWithVat.map((amount) => amount / totals.purchaseTotal))
+      : '—';
+    const parsedPurchasePlusTax = totals.purchaseTotal + totals.parsedOrderTax;
+    const parsedPurchasePlusTaxWithVat = totals.parsedOrderTaxWithVat.map((amount) => totals.purchaseTotal + amount);
+    const purchaseSummary = totals.ordersWithTotalCount
+      ? `Parsed purchase total: <strong>${euro(totals.purchaseTotal)}</strong> from <strong>${totals.ordersWithTotalCount}/${orders}</strong> visible order total(s).<br>
+      For those parsed orders, the €${PRICE_PER_PARCEL} tax is <strong>${euro(totals.parsedOrderTax)}</strong> (<strong>${parsedTaxShare}</strong> of purchases), or <strong>${euroRange(totals.parsedOrderTaxWithVat)}</strong> (<strong>${parsedTaxWithVatShare}</strong>) including VAT on the tax.<br>
+      Parsed purchases + parcel tax: <strong>${euro(parsedPurchasePlusTax)}</strong>; with VAT-on-tax: <strong>${euroRange(parsedPurchasePlusTaxWithVat)}</strong> (${vatLabel} VAT).<br>`
+      : 'No visible order totals could be parsed, so purchase-total and tax-share figures are unavailable.<br>';
 
     setStatus('Done. Scanned ' + state.pages + ' page(s).');
     els.result.style.display = 'block';
     els.result.innerHTML = `
       <strong>${orders}</strong> physical Amazon.de order(s) placed from <strong>${formatDate(cutoff)}</strong> to <strong>${formatDate(now)}</strong>.<br>
-      Order-proxy estimate: <strong>${orders} × €${PRICE_PER_PARCEL} = ${euro(orderCost)}</strong>.<br>
-      Visible delivery/shipment boxes: <strong>${state.deliveryGroups}</strong>${state.deliveryGroups ? `, parcel-ish estimate <strong>${euro(deliveryCost)}</strong>.` : '.'}
+      ${purchaseSummary}
+      Order-proxy tax estimate: <strong>${orders} × €${PRICE_PER_PARCEL} = ${euro(totals.orderTax)}</strong>; with VAT-on-tax <strong>${euroRange(totals.orderTaxWithVat)}</strong> (${vatLabel} VAT).<br>
+      Visible delivery/shipment boxes: <strong>${state.deliveryGroups}</strong>${state.deliveryGroups ? `, parcel-ish tax <strong>${euro(totals.deliveryTax)}</strong>; with VAT-on-tax <strong>${euroRange(totals.deliveryTaxWithVat)}</strong>.` : '.'}
     `;
     log('Done.');
   }

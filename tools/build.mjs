@@ -65,7 +65,7 @@ const html = `<!doctype html>
     <div class="hero">
       <header>
         <h1>Amazon.de parcel-tax estimator</h1>
-        <p class="lede">A local-only bookmarklet that scans your rendered Amazon.de order pages and estimates what a €2-per-parcel tax would mean for you.</p>
+        <p class="lede">A local-only bookmarklet that scans your rendered Amazon.de order pages, sums visible order totals, and estimates what a €2-per-parcel tax plus VAT-on-tax would mean for you.</p>
       </header>
       <section>
         <div class="install">
@@ -76,7 +76,7 @@ const html = `<!doctype html>
           <li>Go to <code>https://www.amazon.de/your-orders/orders</code> and sign in.</li>
           <li>Click the bookmarklet.</li>
           <li>Wait while it loads hidden same-origin order pages for the current and previous year.</li>
-          <li>Read the order-based estimate and optional delivery-box estimate.</li>
+          <li>Read the purchase-total, tax-share, VAT-on-tax, and optional delivery-box estimates.</li>
         </ol>
         <div class="note"><strong>Privacy:</strong> the bookmarklet runs entirely in your browser. It does not send order data anywhere. The CSV export is generated locally.</div>
         <h2>If dragging does not work</h2>
