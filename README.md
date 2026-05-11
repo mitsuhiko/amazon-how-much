@@ -1,6 +1,6 @@
 # Amazon.de parcel-tax estimator bookmarklet
 
-Local-only bookmarklet to estimate how many Amazon.de physical orders/delivery groups you had in the last 365 days, what a €2-per-parcel tax would cost, and how that tax compares to parsed purchase totals.
+Local-only bookmarklet to estimate how many Amazon.de physical orders/delivery groups you had in the last 365 days, what a €2-per-parcel tax would cost, and how that tax compares to visible purchase totals.
 
 ## Build
 
@@ -41,7 +41,7 @@ No data is sent anywhere. CSV export is generated locally in the browser.
 ## Limitations
 
 - It estimates orders/delivery groups, not guaranteed legal parcel-tax liability.
-- Order totals are parsed from visible order headers and may be missing if Amazon changes the DOM.
+- Order totals are read from visible order headers and may be missing if Amazon changes the DOM.
 - VAT class is not exposed in the order list, so VAT-on-tax is shown as 10%/20% alternatives.
 - One order can be split into multiple parcels; multiple orders may be bundled.
 - Digital/subscription orders are skipped by physical order-id format.
