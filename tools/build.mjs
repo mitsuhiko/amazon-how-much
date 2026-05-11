@@ -5,6 +5,7 @@ const href = `javascript:${encodeURIComponent(source)}`;
 
 mkdirSync(new URL('../dist', import.meta.url), { recursive: true });
 writeFileSync(new URL('../dist/bookmarklet.txt', import.meta.url), href + '\n');
+writeFileSync(new URL('../dist/.nojekyll', import.meta.url), '');
 
 const html = `<!doctype html>
 <html lang="en">

@@ -20,6 +20,10 @@ This creates:
 3. Open `https://www.amazon.de/your-orders/orders` and sign in.
 4. Click the bookmarklet.
 
+## GitHub Pages deployment
+
+Pushing to `main` runs `.github/workflows/pages.yml`, builds `dist/`, and deploys it with GitHub Pages Actions. In the repository settings, set **Pages → Build and deployment → Source** to **GitHub Actions**.
+
 ## How it works
 
 The bookmarklet injects a small overlay into Amazon.de. It loads same-origin Amazon order-history pages in hidden iframes for the current year and previous year, waits for Amazon's own client-side rendering/decryption, then counts physical retail order cards with order IDs matching:
